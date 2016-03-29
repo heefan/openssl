@@ -32,7 +32,7 @@
  *    must display the following acknowledgement:
  *    "This product includes cryptographic software written by
  *     Eric Young (eay@cryptsoft.com)"
- *    The word 'cryptographic' can be left out if the rouines from the library
+ *    The word 'cryptographic' can be left out if the routines from the library
  *    being used are not cryptographic related :-).
  * 4. If you include any Windows specific code (or a derivative thereof) from
  *    the apps directory (application code) you must include an acknowledgement:
@@ -50,7 +50,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * The licence and distribution terms for any publically available version or
+ * The licence and distribution terms for any publicly available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
  * [including the GNU Public Licence.]
@@ -662,6 +662,14 @@ ASN1_GENERALIZEDTIME *ASN1_TIME_to_generalizedtime(ASN1_TIME *t, ASN1_GENERALIZE
 int ASN1_TIME_set_string(ASN1_TIME *s, const char *str);
 
 int i2a_ASN1_INTEGER(BIO *bp, ASN1_INTEGER *a);
+/**
+ *@brief        Convert BIO object into ASN1_INTEGER object
+ *@param bp     Given BIO instance to convert
+ *@param bs     The ASN1_INTEGER object to save result
+ *@param buf    The buffer to save the result in ASCII
+ *@param size   The size of the buffer
+ *@retval  1  Ok, 0 fail
+ */
 int a2i_ASN1_INTEGER(BIO *bp, ASN1_INTEGER *bs, char *buf, int size);
 int i2a_ASN1_ENUMERATED(BIO *bp, ASN1_ENUMERATED *a);
 int a2i_ASN1_ENUMERATED(BIO *bp, ASN1_ENUMERATED *bs, char *buf, int size);
@@ -670,6 +678,17 @@ int a2i_ASN1_STRING(BIO *bp, ASN1_STRING *bs, char *buf, int size);
 int i2a_ASN1_STRING(BIO *bp, ASN1_STRING *a, int type);
 int i2t_ASN1_OBJECT(char *buf, int buf_len, ASN1_OBJECT *a);
 
+/**
+ *@brief    Get DER encoding from an OID
+ *@param    out     the given buffer to save result.
+ *@param    olen    the length of the "out"
+ *@param    buf     the given buffer of OID
+ *@param    num     the length of "buf"
+ *@note     you can get "olen" by using the call
+ *             int length = a2d_ASN1_OBJECT(NULL, 0, oid, -1);
+ *          when num == -1, the function will consider the buf is terminated by NULL,
+ *          which is num = strlen(buf)
+ */
 int a2d_ASN1_OBJECT(unsigned char *out, int olen, const char *buf, int num);
 ASN1_OBJECT *ASN1_OBJECT_create(int nid, unsigned char *data, int len,
                                 const char *sn, const char *ln);
