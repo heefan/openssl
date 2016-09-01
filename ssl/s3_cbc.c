@@ -1,56 +1,10 @@
-/* ssl/s3_cbc.c */
-/* ====================================================================
- * Copyright (c) 2012 The OpenSSL Project.  All rights reserved.
+/*
+ * Copyright 2012-2016 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
 #include "internal/constant_time_locl.h"
@@ -71,8 +25,6 @@
  * supported by TLS.)
  */
 #define MAX_HASH_BLOCK_SIZE 128
-
-
 
 /*
  * u32toLE serialises an unsigned, 32-bit number (n) as four bytes at (p) in
@@ -172,16 +124,17 @@ char ssl3_cbc_record_digest_supported(const EVP_MD_CTX *ctx)
  * functions, above, we know that data_plus_mac_size is large enough to contain
  * a padding byte and MAC. (If the padding was invalid, it might contain the
  * padding too. )
+ * Returns 1 on success or 0 on error
  */
-void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
-                            unsigned char *md_out,
-                            size_t *md_out_size,
-                            const unsigned char header[13],
-                            const unsigned char *data,
-                            size_t data_plus_mac_size,
-                            size_t data_plus_mac_plus_padding_size,
-                            const unsigned char *mac_secret,
-                            unsigned mac_secret_length, char is_sslv3)
+int ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
+                           unsigned char *md_out,
+                           size_t *md_out_size,
+                           const unsigned char header[13],
+                           const unsigned char *data,
+                           size_t data_plus_mac_size,
+                           size_t data_plus_mac_plus_padding_size,
+                           const unsigned char *mac_secret,
+                           unsigned mac_secret_length, char is_sslv3)
 {
     union {
         double align;
@@ -200,7 +153,7 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
     unsigned char first_block[MAX_HASH_BLOCK_SIZE];
     unsigned char mac_out[EVP_MAX_MD_SIZE];
     unsigned i, j, md_out_size_u;
-    EVP_MD_CTX md_ctx;
+    EVP_MD_CTX *md_ctx = NULL;
     /*
      * mdLengthSize is the number of bytes in the length field that
      * terminates * the hash.
@@ -217,7 +170,8 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
 
     switch (EVP_MD_CTX_type(ctx)) {
     case NID_md5:
-        MD5_Init((MD5_CTX *)md_state.c);
+        if (MD5_Init((MD5_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_md5_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))MD5_Transform;
@@ -226,28 +180,32 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
         length_is_big_endian = 0;
         break;
     case NID_sha1:
-        SHA1_Init((SHA_CTX *)md_state.c);
+        if (SHA1_Init((SHA_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_sha1_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))SHA1_Transform;
         md_size = 20;
         break;
     case NID_sha224:
-        SHA224_Init((SHA256_CTX *)md_state.c);
+        if (SHA224_Init((SHA256_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_sha256_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))SHA256_Transform;
         md_size = 224 / 8;
         break;
     case NID_sha256:
-        SHA256_Init((SHA256_CTX *)md_state.c);
+        if (SHA256_Init((SHA256_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_sha256_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))SHA256_Transform;
         md_size = 32;
         break;
     case NID_sha384:
-        SHA384_Init((SHA512_CTX *)md_state.c);
+        if (SHA384_Init((SHA512_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_sha512_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))SHA512_Transform;
@@ -256,7 +214,8 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
         md_length_size = 16;
         break;
     case NID_sha512:
-        SHA512_Init((SHA512_CTX *)md_state.c);
+        if (SHA512_Init((SHA512_CTX *)md_state.c) <= 0)
+            return 0;
         md_final_raw = tls1_sha512_final_raw;
         md_transform =
             (void (*)(void *ctx, const unsigned char *block))SHA512_Transform;
@@ -271,8 +230,8 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
          */
         OPENSSL_assert(0);
         if (md_out_size)
-            *md_out_size = -1;
-        return;
+            *md_out_size = 0;
+        return 0;
     }
 
     OPENSSL_assert(md_length_size <= MAX_HASH_BIT_COUNT_BYTES);
@@ -410,7 +369,7 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
              */
             if (header_length <= md_block_size) {
                 /* Should never happen */
-                return;
+                return 0;
             }
             overhang = header_length - md_block_size;
             md_transform(md_state.c, header);
@@ -490,27 +449,37 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
             mac_out[j] |= block[j] & is_block_b;
     }
 
-    EVP_MD_CTX_init(&md_ctx);
-    EVP_DigestInit_ex(&md_ctx, ctx->digest, NULL /* engine */ );
+    md_ctx = EVP_MD_CTX_new();
+    if (md_ctx == NULL)
+        goto err;
+    if (EVP_DigestInit_ex(md_ctx, EVP_MD_CTX_md(ctx), NULL /* engine */ ) <= 0)
+        goto err;
     if (is_sslv3) {
         /* We repurpose |hmac_pad| to contain the SSLv3 pad2 block. */
         memset(hmac_pad, 0x5c, sslv3_pad_length);
 
-        EVP_DigestUpdate(&md_ctx, mac_secret, mac_secret_length);
-        EVP_DigestUpdate(&md_ctx, hmac_pad, sslv3_pad_length);
-        EVP_DigestUpdate(&md_ctx, mac_out, md_size);
+        if (EVP_DigestUpdate(md_ctx, mac_secret, mac_secret_length) <= 0
+            || EVP_DigestUpdate(md_ctx, hmac_pad, sslv3_pad_length) <= 0
+            || EVP_DigestUpdate(md_ctx, mac_out, md_size) <= 0)
+            goto err;
     } else {
         /* Complete the HMAC in the standard manner. */
         for (i = 0; i < md_block_size; i++)
             hmac_pad[i] ^= 0x6a;
 
-        EVP_DigestUpdate(&md_ctx, hmac_pad, md_block_size);
-        EVP_DigestUpdate(&md_ctx, mac_out, md_size);
+        if (EVP_DigestUpdate(md_ctx, hmac_pad, md_block_size) <= 0
+            || EVP_DigestUpdate(md_ctx, mac_out, md_size) <= 0)
+            goto err;
     }
-    ret = EVP_DigestFinal(&md_ctx, md_out, &md_out_size_u);
+    ret = EVP_DigestFinal(md_ctx, md_out, &md_out_size_u);
     if (ret && md_out_size)
         *md_out_size = md_out_size_u;
-    EVP_MD_CTX_cleanup(&md_ctx);
+    EVP_MD_CTX_free(md_ctx);
+
+    return 1;
+ err:
+    EVP_MD_CTX_free(md_ctx);
+    return 0;
 }
 
 /*
@@ -519,13 +488,13 @@ void ssl3_cbc_digest_record(const EVP_MD_CTX *ctx,
  * digesting additional data.
  */
 
-void tls_fips_digest_extra(const EVP_CIPHER_CTX *cipher_ctx,
-                           EVP_MD_CTX *mac_ctx, const unsigned char *data,
-                           size_t data_len, size_t orig_len)
+int tls_fips_digest_extra(const EVP_CIPHER_CTX *cipher_ctx,
+                          EVP_MD_CTX *mac_ctx, const unsigned char *data,
+                          size_t data_len, size_t orig_len)
 {
     size_t block_size, digest_pad, blocks_data, blocks_orig;
     if (EVP_CIPHER_CTX_mode(cipher_ctx) != EVP_CIPH_CBC_MODE)
-        return;
+        return 1;
     block_size = EVP_MD_CTX_block_size(mac_ctx);
     /*-
      * We are in FIPS mode if we get this far so we know we have only SHA*
@@ -555,6 +524,6 @@ void tls_fips_digest_extra(const EVP_CIPHER_CTX *cipher_ctx,
      * The "data" pointer should always have enough space to perform this
      * operation as it is large enough for a maximum length TLS buffer.
      */
-    EVP_DigestSignUpdate(mac_ctx, data,
-                         (blocks_orig - blocks_data + 1) * block_size);
+    return EVP_DigestSignUpdate(mac_ctx, data,
+                                (blocks_orig - blocks_data + 1) * block_size);
 }

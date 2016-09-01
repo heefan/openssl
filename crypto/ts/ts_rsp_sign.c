@@ -1,60 +1,10 @@
-/* crypto/ts/ts_resp_sign.c */
 /*
- * Written by Zoltan Glozik (zglozik@stones.com) for the OpenSSL project
- * 2002.
- */
-/* ====================================================================
- * Copyright (c) 2006 The OpenSSL Project.  All rights reserved.
+ * Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    licensing@OpenSSL.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
 #include "internal/cryptlib.h"
@@ -96,7 +46,7 @@ static ASN1_INTEGER *def_serial_cb(struct TS_resp_ctx *ctx, void *data)
 {
     ASN1_INTEGER *serial = ASN1_INTEGER_new();
 
-    if (!serial)
+    if (serial == NULL)
         goto err;
     if (!ASN1_INTEGER_set(serial, 1))
         goto err;
@@ -169,6 +119,8 @@ TS_RESP_CTX *TS_RESP_CTX_new()
         return NULL;
     }
 
+    ctx->signer_md = EVP_sha256();
+
     ctx->serial_cb = def_serial_cb;
     ctx->time_cb = def_time_cb;
     ctx->extension_cb = def_extension_cb;
@@ -210,12 +162,18 @@ int TS_RESP_CTX_set_signer_key(TS_RESP_CTX *ctx, EVP_PKEY *key)
 {
     EVP_PKEY_free(ctx->signer_key);
     ctx->signer_key = key;
-    CRYPTO_add(&ctx->signer_key->references, +1, CRYPTO_LOCK_EVP_PKEY);
+    EVP_PKEY_up_ref(ctx->signer_key);
 
     return 1;
 }
 
-int TS_RESP_CTX_set_def_policy(TS_RESP_CTX *ctx, ASN1_OBJECT *def_policy)
+int TS_RESP_CTX_set_signer_digest(TS_RESP_CTX *ctx, const EVP_MD *md)
+{
+    ctx->signer_md = md;
+    return 1;
+}
+
+int TS_RESP_CTX_set_def_policy(TS_RESP_CTX *ctx, const ASN1_OBJECT *def_policy)
 {
     ASN1_OBJECT_free(ctx->default_policy);
     if ((ctx->default_policy = OBJ_dup(def_policy)) == NULL)
@@ -241,7 +199,7 @@ int TS_RESP_CTX_set_certs(TS_RESP_CTX *ctx, STACK_OF(X509) *certs)
     return 1;
 }
 
-int TS_RESP_CTX_add_policy(TS_RESP_CTX *ctx, ASN1_OBJECT *policy)
+int TS_RESP_CTX_add_policy(TS_RESP_CTX *ctx, const ASN1_OBJECT *policy)
 {
     ASN1_OBJECT *copy = NULL;
 
@@ -265,7 +223,7 @@ int TS_RESP_CTX_add_md(TS_RESP_CTX *ctx, const EVP_MD *md)
     if (ctx->mds == NULL
         && (ctx->mds = sk_EVP_MD_new_null()) == NULL)
         goto err;
-    if (!sk_EVP_MD_push(ctx->mds, (EVP_MD *)md))
+    if (!sk_EVP_MD_push(ctx->mds, md))
         goto err;
 
     return 1;
@@ -488,7 +446,7 @@ static int ts_RESP_check_request(TS_RESP_CTX *ctx)
     X509_ALGOR *md_alg;
     int md_alg_id;
     const ASN1_OCTET_STRING *digest;
-    EVP_MD *md = NULL;
+    const EVP_MD *md = NULL;
     int i;
 
     if (TS_REQ_get_version(request) != 1) {
@@ -502,7 +460,7 @@ static int ts_RESP_check_request(TS_RESP_CTX *ctx)
     md_alg = msg_imprint->hash_algo;
     md_alg_id = OBJ_obj2nid(md_alg->algorithm);
     for (i = 0; !md && i < sk_EVP_MD_num(ctx->mds); ++i) {
-        EVP_MD *current_md = sk_EVP_MD_value(ctx->mds, i);
+        const EVP_MD *current_md = sk_EVP_MD_value(ctx->mds, i);
         if (md_alg_id == EVP_MD_type(current_md))
             md = current_md;
     }
@@ -700,7 +658,7 @@ static int ts_RESP_sign(TS_RESP_CTX *ctx)
     }
 
     if ((si = PKCS7_add_signature(p7, ctx->signer_cert,
-                                  ctx->signer_key, EVP_sha1())) == NULL) {
+                                  ctx->signer_key, ctx->signer_md)) == NULL) {
         TSerr(TS_F_TS_RESP_SIGN, TS_R_PKCS7_ADD_SIGNATURE_ERROR);
         goto err;
     }
@@ -786,6 +744,7 @@ static ESS_CERT_ID *ess_CERT_ID_new_init(X509 *cert, int issuer_needed)
     GENERAL_NAME *name = NULL;
     unsigned char cert_sha1[SHA_DIGEST_LENGTH];
 
+    /* Call for side-effect of computing hash and caching extensions */
     X509_check_purpose(cert, -1, 0);
     if ((cid = ESS_CERT_ID_new()) == NULL)
         goto err;

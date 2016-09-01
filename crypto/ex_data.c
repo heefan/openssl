@@ -1,167 +1,84 @@
-/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
- * All rights reserved.
+/*
+ * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
  *
- * This package is an SSL implementation written
- * by Eric Young (eay@cryptsoft.com).
- * The implementation was written so as to conform with Netscapes SSL.
- *
- * This library is free for commercial and non-commercial use as long as
- * the following conditions are aheared to.  The following conditions
- * apply to all code found in this distribution, be it the RC4, RSA,
- * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
- * included with this distribution is covered by the same copyright terms
- * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
- * Copyright remains Eric Young's, and as such any Copyright notices in
- * the code are not to be removed.
- * If this package is used in a product, Eric Young should be given attribution
- * as the author of the parts of the library used.
- * This can be in the form of a textual message at program startup or
- * in documentation (online or textual) provided with the package.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *    "This product includes cryptographic software written by
- *     Eric Young (eay@cryptsoft.com)"
- *    The word 'cryptographic' can be left out if the rouines from the library
- *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
- *    the apps directory (application code) you must include an acknowledgement:
- *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
- * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- * The licence and distribution terms for any publically available version or
- * derivative of this code cannot be changed.  i.e. this code cannot simply be
- * copied and put under another distribution licence
- * [including the GNU Public Licence.]
- */
-/* ====================================================================
- * Copyright (c) 1998-2001 The OpenSSL Project.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
-#include "internal/cryptlib.h"
+#include "internal/cryptlib_int.h"
+#include "internal/thread_once.h"
 #include <openssl/lhash.h>
 
-
-typedef struct {
-    long argl;                  /* Arbitary long */
-    void *argp;                 /* Arbitary void * */
+/*
+ * Each structure type (sometimes called a class), that supports
+ * exdata has a stack of callbacks for each instance.
+ */
+struct ex_callback_st {
+    long argl;                  /* Arbitrary long */
+    void *argp;                 /* Arbitrary void * */
     CRYPTO_EX_new *new_func;
     CRYPTO_EX_free *free_func;
     CRYPTO_EX_dup *dup_func;
-} CRYPTO_EX_DATA_FUNCS;
-
-DECLARE_STACK_OF(CRYPTO_EX_DATA_FUNCS)
+};
 
 /*
- * State for each class; could just be a typedef, but this allows future
- * changes.
+ * The state for each class.  This could just be a typedef, but
+ * a structure allows future changes.
  */
-typedef struct {
-    STACK_OF(CRYPTO_EX_DATA_FUNCS) *meth;
-} EX_CLASS_ITEM;
+typedef struct ex_callbacks_st {
+    STACK_OF(EX_CALLBACK) *meth;
+} EX_CALLBACKS;
 
-static EX_CLASS_ITEM ex_data[CRYPTO_EX_INDEX__COUNT];
+static EX_CALLBACKS ex_data[CRYPTO_EX_INDEX__COUNT];
+
+static CRYPTO_RWLOCK *ex_data_lock = NULL;
+static CRYPTO_ONCE ex_data_init = CRYPTO_ONCE_STATIC_INIT;
+
+DEFINE_RUN_ONCE_STATIC(do_ex_data_init)
+{
+    ex_data_lock = CRYPTO_THREAD_lock_new();
+    return ex_data_lock != NULL;
+}
 
 /*
- * Return the EX_CLASS_ITEM from the "ex_data" array that corresponds to
+ * Return the EX_CALLBACKS from the |ex_data| array that corresponds to
  * a given class.  On success, *holds the lock.*
  */
-static EX_CLASS_ITEM *def_get_class(int class_index)
+static EX_CALLBACKS *get_and_lock(int class_index)
 {
-    EX_CLASS_ITEM *ip;
+    EX_CALLBACKS *ip;
 
     if (class_index < 0 || class_index >= CRYPTO_EX_INDEX__COUNT) {
-        CRYPTOerr(CRYPTO_F_DEF_GET_CLASS, ERR_R_MALLOC_FAILURE);
+        CRYPTOerr(CRYPTO_F_GET_AND_LOCK, ERR_R_PASSED_INVALID_ARGUMENT);
         return NULL;
     }
 
-    ip = &ex_data[class_index];
-    CRYPTO_w_lock(CRYPTO_LOCK_EX_DATA);
-    if (ip->meth == NULL) {
-        ip->meth = sk_CRYPTO_EX_DATA_FUNCS_new_null();
-        /* We push an initial value on the stack because the SSL
-         * "app_data" routines use ex_data index zero.  See RT 3710. */
-        if (ip->meth == NULL
-            || !sk_CRYPTO_EX_DATA_FUNCS_push(ip->meth, NULL)) {
-            CRYPTOerr(CRYPTO_F_DEF_GET_CLASS, ERR_R_MALLOC_FAILURE);
-            CRYPTO_w_unlock(CRYPTO_LOCK_EX_DATA);
-            return NULL;
-        }
+    if (!RUN_ONCE(&ex_data_init, do_ex_data_init)) {
+        CRYPTOerr(CRYPTO_F_GET_AND_LOCK, ERR_R_MALLOC_FAILURE);
+        return NULL;
     }
+
+    if (ex_data_lock == NULL) {
+        /*
+         * This can happen in normal operation when using CRYPTO_mem_leaks().
+         * The CRYPTO_mem_leaks() function calls OPENSSL_cleanup() which cleans
+         * up the locks. Subsequently the BIO that CRYPTO_mem_leaks() uses gets
+         * freed, which also attempts to free the ex_data. However
+         * CRYPTO_mem_leaks() ensures that the ex_data is freed early (i.e.
+         * before OPENSSL_cleanup() is called), so if we get here we can safely
+         * ignore this operation. We just treat it as an error.
+         */
+         return NULL;
+    }
+
+    ip = &ex_data[class_index];
+    CRYPTO_THREAD_write_lock(ex_data_lock);
     return ip;
 }
 
-static void cleanup_cb(CRYPTO_EX_DATA_FUNCS *funcs)
+static void cleanup_cb(EX_CALLBACK *funcs)
 {
     OPENSSL_free(funcs);
 }
@@ -172,33 +89,92 @@ static void cleanup_cb(CRYPTO_EX_DATA_FUNCS *funcs)
  * called under potential race-conditions anyway (it's for program shutdown
  * after all).
  */
-void CRYPTO_cleanup_all_ex_data(void)
+void crypto_cleanup_all_ex_data_int(void)
 {
     int i;
 
     for (i = 0; i < CRYPTO_EX_INDEX__COUNT; ++i) {
-        EX_CLASS_ITEM *ip = &ex_data[i];
+        EX_CALLBACKS *ip = &ex_data[i];
 
-        sk_CRYPTO_EX_DATA_FUNCS_pop_free(ip->meth, cleanup_cb);
+        sk_EX_CALLBACK_pop_free(ip->meth, cleanup_cb);
         ip->meth = NULL;
     }
+
+    CRYPTO_THREAD_lock_free(ex_data_lock);
+    ex_data_lock = NULL;
+}
+
+
+/*
+ * Unregister a new index by replacing the callbacks with no-ops.
+ * Any in-use instances are leaked.
+ */
+static void dummy_new(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                     long argl, void *argp)
+{
+}
+
+static void dummy_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx,
+                       long argl, void *argp)
+{
+}
+
+static int dummy_dup(CRYPTO_EX_DATA *to, const CRYPTO_EX_DATA *from,
+                     void *from_d, int idx,
+                     long argl, void *argp)
+{
+    return 0;
+}
+
+int CRYPTO_free_ex_index(int class_index, int idx)
+{
+    EX_CALLBACKS *ip = get_and_lock(class_index);
+    EX_CALLBACK *a;
+    int toret = 0;
+
+    if (ip == NULL)
+        return 0;
+    if (idx < 0 || idx >= sk_EX_CALLBACK_num(ip->meth))
+        goto err;
+    a = sk_EX_CALLBACK_value(ip->meth, idx);
+    if (a == NULL)
+        goto err;
+    a->new_func = dummy_new;
+    a->dup_func = dummy_dup;
+    a->free_func = dummy_free;
+    toret = 1;
+err:
+    CRYPTO_THREAD_unlock(ex_data_lock);
+    return toret;
 }
 
 /*
- * Inside an existing class, get/register a new index.
+ * Register a new index.
  */
 int CRYPTO_get_ex_new_index(int class_index, long argl, void *argp,
                             CRYPTO_EX_new *new_func, CRYPTO_EX_dup *dup_func,
                             CRYPTO_EX_free *free_func)
 {
     int toret = -1;
-    CRYPTO_EX_DATA_FUNCS *a;
-    EX_CLASS_ITEM *ip = def_get_class(class_index);
+    EX_CALLBACK *a;
+    EX_CALLBACKS *ip = get_and_lock(class_index);
 
-    if (!ip)
+    if (ip == NULL)
         return -1;
-    a = (CRYPTO_EX_DATA_FUNCS *)OPENSSL_malloc(sizeof(*a));
-    if (!a) {
+
+    if (ip->meth == NULL) {
+        ip->meth = sk_EX_CALLBACK_new_null();
+        /* We push an initial value on the stack because the SSL
+         * "app_data" routines use ex_data index zero.  See RT 3710. */
+        if (ip->meth == NULL
+            || !sk_EX_CALLBACK_push(ip->meth, NULL)) {
+            CRYPTOerr(CRYPTO_F_CRYPTO_GET_EX_NEW_INDEX, ERR_R_MALLOC_FAILURE);
+            goto err;
+        }
+    }
+
+    a = (EX_CALLBACK *)OPENSSL_malloc(sizeof(*a));
+    if (a == NULL) {
         CRYPTOerr(CRYPTO_F_CRYPTO_GET_EX_NEW_INDEX, ERR_R_MALLOC_FAILURE);
         goto err;
     }
@@ -208,23 +184,23 @@ int CRYPTO_get_ex_new_index(int class_index, long argl, void *argp,
     a->dup_func = dup_func;
     a->free_func = free_func;
 
-    if (!sk_CRYPTO_EX_DATA_FUNCS_push(ip->meth, NULL)) {
+    if (!sk_EX_CALLBACK_push(ip->meth, NULL)) {
         CRYPTOerr(CRYPTO_F_CRYPTO_GET_EX_NEW_INDEX, ERR_R_MALLOC_FAILURE);
         OPENSSL_free(a);
         goto err;
     }
-    toret = sk_CRYPTO_EX_DATA_FUNCS_num(ip->meth) - 1;
-    (void)sk_CRYPTO_EX_DATA_FUNCS_set(ip->meth, toret, a);
+    toret = sk_EX_CALLBACK_num(ip->meth) - 1;
+    (void)sk_EX_CALLBACK_set(ip->meth, toret, a);
 
  err:
-    CRYPTO_w_unlock(CRYPTO_LOCK_EX_DATA);
+    CRYPTO_THREAD_unlock(ex_data_lock);
     return toret;
 }
 
 /*
  * Initialise a new CRYPTO_EX_DATA for use in a particular class - including
  * calling new() callbacks for each index in the class used by this variable
- * Thread-safe by copying a class's array of "CRYPTO_EX_DATA_FUNCS" entries
+ * Thread-safe by copying a class's array of "EX_CALLBACK" entries
  * in the lock, then using them outside the lock. Note this only applies
  * to the global "ex_data" state (ie. class definitions), not 'ad' itself.
  */
@@ -232,26 +208,26 @@ int CRYPTO_new_ex_data(int class_index, void *obj, CRYPTO_EX_DATA *ad)
 {
     int mx, i;
     void *ptr;
-    CRYPTO_EX_DATA_FUNCS **storage = NULL;
-    CRYPTO_EX_DATA_FUNCS *stack[10];
-    EX_CLASS_ITEM *ip = def_get_class(class_index);
+    EX_CALLBACK **storage = NULL;
+    EX_CALLBACK *stack[10];
+    EX_CALLBACKS *ip = get_and_lock(class_index);
 
-    if (!ip)
+    if (ip == NULL)
         return 0;
 
     ad->sk = NULL;
 
-    mx = sk_CRYPTO_EX_DATA_FUNCS_num(ip->meth);
+    mx = sk_EX_CALLBACK_num(ip->meth);
     if (mx > 0) {
         if (mx < (int)OSSL_NELEM(stack))
             storage = stack;
         else
             storage = OPENSSL_malloc(sizeof(*storage) * mx);
-        if (storage)
+        if (storage != NULL)
             for (i = 0; i < mx; i++)
-                storage[i] = sk_CRYPTO_EX_DATA_FUNCS_value(ip->meth, i);
+                storage[i] = sk_EX_CALLBACK_value(ip->meth, i);
     }
-    CRYPTO_w_unlock(CRYPTO_LOCK_EX_DATA);
+    CRYPTO_THREAD_unlock(ex_data_lock);
 
     if (mx > 0 && storage == NULL) {
         CRYPTOerr(CRYPTO_F_CRYPTO_NEW_EX_DATA, ERR_R_MALLOC_FAILURE);
@@ -274,21 +250,21 @@ int CRYPTO_new_ex_data(int class_index, void *obj, CRYPTO_EX_DATA *ad)
  * for each index in the class used by this variable
  */
 int CRYPTO_dup_ex_data(int class_index, CRYPTO_EX_DATA *to,
-                       CRYPTO_EX_DATA *from)
+                       const CRYPTO_EX_DATA *from)
 {
     int mx, j, i;
     char *ptr;
-    CRYPTO_EX_DATA_FUNCS *stack[10];
-    CRYPTO_EX_DATA_FUNCS **storage = NULL;
-    EX_CLASS_ITEM *ip;
+    EX_CALLBACK *stack[10];
+    EX_CALLBACK **storage = NULL;
+    EX_CALLBACKS *ip;
 
     if (from->sk == NULL)
         /* Nothing to copy over */
         return 1;
-    if ((ip = def_get_class(class_index)) == NULL)
+    if ((ip = get_and_lock(class_index)) == NULL)
         return 0;
 
-    mx = sk_CRYPTO_EX_DATA_FUNCS_num(ip->meth);
+    mx = sk_EX_CALLBACK_num(ip->meth);
     j = sk_void_num(from->sk);
     if (j < mx)
         mx = j;
@@ -297,11 +273,11 @@ int CRYPTO_dup_ex_data(int class_index, CRYPTO_EX_DATA *to,
             storage = stack;
         else
             storage = OPENSSL_malloc(sizeof(*storage) * mx);
-        if (storage)
+        if (storage != NULL)
             for (i = 0; i < mx; i++)
-                storage[i] = sk_CRYPTO_EX_DATA_FUNCS_value(ip->meth, i);
+                storage[i] = sk_EX_CALLBACK_value(ip->meth, i);
     }
-    CRYPTO_w_unlock(CRYPTO_LOCK_EX_DATA);
+    CRYPTO_THREAD_unlock(ex_data_lock);
 
     if (mx > 0 && storage == NULL) {
         CRYPTOerr(CRYPTO_F_CRYPTO_DUP_EX_DATA, ERR_R_MALLOC_FAILURE);
@@ -328,25 +304,25 @@ int CRYPTO_dup_ex_data(int class_index, CRYPTO_EX_DATA *to,
 void CRYPTO_free_ex_data(int class_index, void *obj, CRYPTO_EX_DATA *ad)
 {
     int mx, i;
-    EX_CLASS_ITEM *ip;
+    EX_CALLBACKS *ip;
     void *ptr;
-    CRYPTO_EX_DATA_FUNCS *stack[10];
-    CRYPTO_EX_DATA_FUNCS **storage = NULL;
+    EX_CALLBACK *stack[10];
+    EX_CALLBACK **storage = NULL;
 
-    if ((ip = def_get_class(class_index)) == NULL)
+    if ((ip = get_and_lock(class_index)) == NULL)
         return;
 
-    mx = sk_CRYPTO_EX_DATA_FUNCS_num(ip->meth);
+    mx = sk_EX_CALLBACK_num(ip->meth);
     if (mx > 0) {
         if (mx < (int)OSSL_NELEM(stack))
             storage = stack;
         else
             storage = OPENSSL_malloc(sizeof(*storage) * mx);
-        if (storage)
+        if (storage != NULL)
             for (i = 0; i < mx; i++)
-                storage[i] = sk_CRYPTO_EX_DATA_FUNCS_value(ip->meth, i);
+                storage[i] = sk_EX_CALLBACK_value(ip->meth, i);
     }
-    CRYPTO_w_unlock(CRYPTO_LOCK_EX_DATA);
+    CRYPTO_THREAD_unlock(ex_data_lock);
 
     if (mx > 0 && storage == NULL) {
         CRYPTOerr(CRYPTO_F_CRYPTO_FREE_EX_DATA, ERR_R_MALLOC_FAILURE);

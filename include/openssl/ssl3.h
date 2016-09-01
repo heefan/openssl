@@ -1,113 +1,12 @@
-/* ssl/ssl3.h */
-/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
- * All rights reserved.
+/*
+ * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
  *
- * This package is an SSL implementation written
- * by Eric Young (eay@cryptsoft.com).
- * The implementation was written so as to conform with Netscapes SSL.
- *
- * This library is free for commercial and non-commercial use as long as
- * the following conditions are aheared to.  The following conditions
- * apply to all code found in this distribution, be it the RC4, RSA,
- * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
- * included with this distribution is covered by the same copyright terms
- * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
- * Copyright remains Eric Young's, and as such any Copyright notices in
- * the code are not to be removed.
- * If this package is used in a product, Eric Young should be given attribution
- * as the author of the parts of the library used.
- * This can be in the form of a textual message at program startup or
- * in documentation (online or textual) provided with the package.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *    "This product includes cryptographic software written by
- *     Eric Young (eay@cryptsoft.com)"
- *    The word 'cryptographic' can be left out if the rouines from the library
- *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
- *    the apps directory (application code) you must include an acknowledgement:
- *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
- * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- * The licence and distribution terms for any publically available version or
- * derivative of this code cannot be changed.  i.e. this code cannot simply be
- * copied and put under another distribution licence
- * [including the GNU Public Licence.]
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
-/* ====================================================================
- * Copyright (c) 1998-2002 The OpenSSL Project.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
- */
+
 /* ====================================================================
  * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
  * ECC cipher suite support in OpenSSL originally developed by
@@ -117,9 +16,7 @@
 #ifndef HEADER_SSL3_H
 # define HEADER_SSL3_H
 
-# ifndef OPENSSL_NO_COMP
-#  include <openssl/comp.h>
-# endif
+# include <openssl/comp.h>
 # include <openssl/buffer.h>
 # include <openssl/evp.h>
 # include <openssl/ssl.h>
@@ -307,7 +204,7 @@ extern "C" {
 # define SSL3_RT_ALERT                   21
 # define SSL3_RT_HANDSHAKE               22
 # define SSL3_RT_APPLICATION_DATA        23
-# define TLS1_RT_HEARTBEAT               24
+# define DTLS1_RT_HEARTBEAT              24
 
 /* Pseudo content types to indicate additional parameters */
 # define TLS1_RT_CRYPTO                  0x1000
@@ -369,113 +266,8 @@ extern "C" {
 /* Set if we encrypt then mac instead of usual mac then encrypt */
 # define TLS1_FLAGS_ENCRYPT_THEN_MAC             0x0100
 
-
-/* SSLv3 */
-/*
- * client
- */
-/* extra state */
-# define SSL3_ST_CW_FLUSH                (0x100|SSL_ST_CONNECT)
-# ifndef OPENSSL_NO_SCTP
-#  define DTLS1_SCTP_ST_CW_WRITE_SOCK                     (0x310|SSL_ST_CONNECT)
-#  define DTLS1_SCTP_ST_CR_READ_SOCK                      (0x320|SSL_ST_CONNECT)
-# endif
-/* write to server */
-# define SSL3_ST_CW_CLNT_HELLO_A         (0x110|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CLNT_HELLO_B         (0x111|SSL_ST_CONNECT)
-/* read from server */
-# define SSL3_ST_CR_SRVR_HELLO_A         (0x120|SSL_ST_CONNECT)
-# define SSL3_ST_CR_SRVR_HELLO_B         (0x121|SSL_ST_CONNECT)
-# define DTLS1_ST_CR_HELLO_VERIFY_REQUEST_A (0x126|SSL_ST_CONNECT)
-# define DTLS1_ST_CR_HELLO_VERIFY_REQUEST_B (0x127|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_A               (0x130|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_B               (0x131|SSL_ST_CONNECT)
-# define SSL3_ST_CR_KEY_EXCH_A           (0x140|SSL_ST_CONNECT)
-# define SSL3_ST_CR_KEY_EXCH_B           (0x141|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_REQ_A           (0x150|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_REQ_B           (0x151|SSL_ST_CONNECT)
-# define SSL3_ST_CR_SRVR_DONE_A          (0x160|SSL_ST_CONNECT)
-# define SSL3_ST_CR_SRVR_DONE_B          (0x161|SSL_ST_CONNECT)
-/* write to server */
-# define SSL3_ST_CW_CERT_A               (0x170|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CERT_B               (0x171|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CERT_C               (0x172|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CERT_D               (0x173|SSL_ST_CONNECT)
-# define SSL3_ST_CW_KEY_EXCH_A           (0x180|SSL_ST_CONNECT)
-# define SSL3_ST_CW_KEY_EXCH_B           (0x181|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CERT_VRFY_A          (0x190|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CERT_VRFY_B          (0x191|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CHANGE_A             (0x1A0|SSL_ST_CONNECT)
-# define SSL3_ST_CW_CHANGE_B             (0x1A1|SSL_ST_CONNECT)
-# ifndef OPENSSL_NO_NEXTPROTONEG
-#  define SSL3_ST_CW_NEXT_PROTO_A         (0x200|SSL_ST_CONNECT)
-#  define SSL3_ST_CW_NEXT_PROTO_B         (0x201|SSL_ST_CONNECT)
-# endif
-# define SSL3_ST_CW_FINISHED_A           (0x1B0|SSL_ST_CONNECT)
-# define SSL3_ST_CW_FINISHED_B           (0x1B1|SSL_ST_CONNECT)
-/* read from server */
-# define SSL3_ST_CR_CHANGE_A             (0x1C0|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CHANGE_B             (0x1C1|SSL_ST_CONNECT)
-# define SSL3_ST_CR_FINISHED_A           (0x1D0|SSL_ST_CONNECT)
-# define SSL3_ST_CR_FINISHED_B           (0x1D1|SSL_ST_CONNECT)
-# define SSL3_ST_CR_SESSION_TICKET_A     (0x1E0|SSL_ST_CONNECT)
-# define SSL3_ST_CR_SESSION_TICKET_B     (0x1E1|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_STATUS_A        (0x1F0|SSL_ST_CONNECT)
-# define SSL3_ST_CR_CERT_STATUS_B        (0x1F1|SSL_ST_CONNECT)
-
-/* server */
-/* extra state */
-# define SSL3_ST_SW_FLUSH                (0x100|SSL_ST_ACCEPT)
-# ifndef OPENSSL_NO_SCTP
-#  define DTLS1_SCTP_ST_SW_WRITE_SOCK                     (0x310|SSL_ST_ACCEPT)
-#  define DTLS1_SCTP_ST_SR_READ_SOCK                      (0x320|SSL_ST_ACCEPT)
-# endif
-/* read from client */
-/* Do not change the number values, they do matter */
-# define SSL3_ST_SR_CLNT_HELLO_A         (0x110|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CLNT_HELLO_B         (0x111|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CLNT_HELLO_C         (0x112|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CLNT_HELLO_D         (0x115|SSL_ST_ACCEPT)
-/* write to client */
-# define DTLS1_ST_SW_HELLO_VERIFY_REQUEST_A (0x113|SSL_ST_ACCEPT)
-# define DTLS1_ST_SW_HELLO_VERIFY_REQUEST_B (0x114|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_HELLO_REQ_A          (0x120|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_HELLO_REQ_B          (0x121|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_HELLO_REQ_C          (0x122|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SRVR_HELLO_A         (0x130|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SRVR_HELLO_B         (0x131|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_A               (0x140|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_B               (0x141|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_KEY_EXCH_A           (0x150|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_KEY_EXCH_B           (0x151|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_REQ_A           (0x160|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_REQ_B           (0x161|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SRVR_DONE_A          (0x170|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SRVR_DONE_B          (0x171|SSL_ST_ACCEPT)
-/* read from client */
-# define SSL3_ST_SR_CERT_A               (0x180|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CERT_B               (0x181|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_KEY_EXCH_A           (0x190|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_KEY_EXCH_B           (0x191|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CERT_VRFY_A          (0x1A0|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CERT_VRFY_B          (0x1A1|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CHANGE_A             (0x1B0|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_CHANGE_B             (0x1B1|SSL_ST_ACCEPT)
-# ifndef OPENSSL_NO_NEXTPROTONEG
-#  define SSL3_ST_SR_NEXT_PROTO_A         (0x210|SSL_ST_ACCEPT)
-#  define SSL3_ST_SR_NEXT_PROTO_B         (0x211|SSL_ST_ACCEPT)
-# endif
-# define SSL3_ST_SR_FINISHED_A           (0x1C0|SSL_ST_ACCEPT)
-# define SSL3_ST_SR_FINISHED_B           (0x1C1|SSL_ST_ACCEPT)
-/* write to client */
-# define SSL3_ST_SW_CHANGE_A             (0x1D0|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CHANGE_B             (0x1D1|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_FINISHED_A           (0x1E0|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_FINISHED_B           (0x1E1|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SESSION_TICKET_A     (0x1F0|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_SESSION_TICKET_B     (0x1F1|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_STATUS_A        (0x200|SSL_ST_ACCEPT)
-# define SSL3_ST_SW_CERT_STATUS_B        (0x201|SSL_ST_ACCEPT)
+/* Set if extended master secret extension received from peer */
+# define TLS1_FLAGS_RECEIVED_EXTMS               0x0200
 
 # define SSL3_MT_HELLO_REQUEST                   0
 # define SSL3_MT_CLIENT_HELLO                    1

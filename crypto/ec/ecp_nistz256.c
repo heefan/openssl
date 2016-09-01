@@ -1,3 +1,12 @@
+/*
+ * Copyright 2014-2016 The OpenSSL Project Authors. All Rights Reserved.
+ *
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
+ */
+
 /******************************************************************************
  *                                                                            *
  * Copyright 2014 Intel Corporation                                           *
@@ -65,7 +74,7 @@ typedef struct {
 typedef P256_POINT_AFFINE PRECOMP256_ROW[64];
 
 /* structure for precomputed multiples of the generator */
-typedef struct ec_pre_comp_st {
+struct nistz256_pre_comp_st {
     const EC_GROUP *group;      /* Parent EC_GROUP object */
     size_t w;                   /* Window size */
     /*
@@ -76,22 +85,40 @@ typedef struct ec_pre_comp_st {
     PRECOMP256_ROW *precomp;
     void *precomp_storage;
     int references;
-} EC_PRE_COMP;
+    CRYPTO_RWLOCK *lock;
+};
 
 /* Functions implemented in assembly */
-/* Modular mul by 2: res = 2*a mod P */
-void ecp_nistz256_mul_by_2(BN_ULONG res[P256_LIMBS],
-                           const BN_ULONG a[P256_LIMBS]);
-/* Modular div by 2: res = a/2 mod P */
-void ecp_nistz256_div_by_2(BN_ULONG res[P256_LIMBS],
-                           const BN_ULONG a[P256_LIMBS]);
-/* Modular mul by 3: res = 3*a mod P */
-void ecp_nistz256_mul_by_3(BN_ULONG res[P256_LIMBS],
-                           const BN_ULONG a[P256_LIMBS]);
+/*
+ * Most of below mentioned functions *preserve* the property of inputs
+ * being fully reduced, i.e. being in [0, modulus) range. Simply put if
+ * inputs are fully reduced, then output is too. Note that reverse is
+ * not true, in sense that given partially reduced inputs output can be
+ * either, not unlikely reduced. And "most" in first sentence refers to
+ * the fact that given the calculations flow one can tolerate that
+ * addition, 1st function below, produces partially reduced result *if*
+ * multiplications by 2 and 3, which customarily use addition, fully
+ * reduce it. This effectively gives two options: a) addition produces
+ * fully reduced result [as long as inputs are, just like remaining
+ * functions]; b) addition is allowed to produce partially reduced
+ * result, but multiplications by 2 and 3 perform additional reduction
+ * step. Choice between the two can be platform-specific, but it was a)
+ * in all cases so far...
+ */
 /* Modular add: res = a+b mod P   */
 void ecp_nistz256_add(BN_ULONG res[P256_LIMBS],
                       const BN_ULONG a[P256_LIMBS],
                       const BN_ULONG b[P256_LIMBS]);
+/* Modular mul by 2: res = 2*a mod P */
+void ecp_nistz256_mul_by_2(BN_ULONG res[P256_LIMBS],
+                           const BN_ULONG a[P256_LIMBS]);
+/* Modular mul by 3: res = 3*a mod P */
+void ecp_nistz256_mul_by_3(BN_ULONG res[P256_LIMBS],
+                           const BN_ULONG a[P256_LIMBS]);
+
+/* Modular div by 2: res = a/2 mod P */
+void ecp_nistz256_div_by_2(BN_ULONG res[P256_LIMBS],
+                           const BN_ULONG a[P256_LIMBS]);
 /* Modular sub: res = a-b mod P   */
 void ecp_nistz256_sub(BN_ULONG res[P256_LIMBS],
                       const BN_ULONG a[P256_LIMBS],
@@ -127,10 +154,7 @@ static const BN_ULONG ONE[P256_LIMBS] = {
     TOBN(0xffffffff, 0xffffffff), TOBN(0x00000000, 0xfffffffe)
 };
 
-static void *ecp_nistz256_pre_comp_dup(void *);
-static void ecp_nistz256_pre_comp_free(void *);
-static void ecp_nistz256_pre_comp_clear_free(void *);
-static EC_PRE_COMP *ecp_nistz256_pre_comp_new(const EC_GROUP *group);
+static NISTZ256_PRE_COMP *ecp_nistz256_pre_comp_new(const EC_GROUP *group);
 
 /* Precomputed tables for the default generator */
 extern const PRECOMP256_ROW ecp_nistz256_precomputed[37];
@@ -182,7 +206,6 @@ static BN_ULONG is_zero(BN_ULONG in)
 {
     in |= (0 - in);
     in = ~in;
-    in &= BN_MASK2;
     in >>= BN_BITS2 - 1;
     return in;
 }
@@ -206,21 +229,29 @@ static BN_ULONG is_equal(const BN_ULONG a[P256_LIMBS],
     return is_zero(res);
 }
 
-static BN_ULONG is_one(const BN_ULONG a[P256_LIMBS])
+static BN_ULONG is_one(const BIGNUM *z)
 {
-    BN_ULONG res;
+    BN_ULONG res = 0;
+    BN_ULONG *a = bn_get_words(z);
 
-    res = a[0] ^ ONE[0];
-    res |= a[1] ^ ONE[1];
-    res |= a[2] ^ ONE[2];
-    res |= a[3] ^ ONE[3];
-    if (P256_LIMBS == 8) {
-        res |= a[4] ^ ONE[4];
-        res |= a[5] ^ ONE[5];
-        res |= a[6] ^ ONE[6];
+    if (bn_get_top(z) == (P256_LIMBS - P256_LIMBS / 8)) {
+        res = a[0] ^ ONE[0];
+        res |= a[1] ^ ONE[1];
+        res |= a[2] ^ ONE[2];
+        res |= a[3] ^ ONE[3];
+        if (P256_LIMBS == 8) {
+            res |= a[4] ^ ONE[4];
+            res |= a[5] ^ ONE[5];
+            res |= a[6] ^ ONE[6];
+            /*
+             * no check for a[7] (being zero) on 32-bit platforms,
+             * because value of "one" takes only 7 limbs.
+             */
+        }
+        res = is_zero(res);
     }
 
-    return is_zero(res);
+    return res;
 }
 
 #ifndef ECP_NISTZ256_REFERENCE_IMPLEMENTATION
@@ -304,19 +335,16 @@ static void ecp_nistz256_point_add(P256_POINT *r,
     const BN_ULONG *in2_y = b->Y;
     const BN_ULONG *in2_z = b->Z;
 
-    /* We encode infinity as (0,0), which is not on the curve,
-     * so it is OK. */
-    in1infty = (in1_x[0] | in1_x[1] | in1_x[2] | in1_x[3] |
-                in1_y[0] | in1_y[1] | in1_y[2] | in1_y[3]);
+    /*
+     * Infinity in encoded as (,,0)
+     */
+    in1infty = (in1_z[0] | in1_z[1] | in1_z[2] | in1_z[3]);
     if (P256_LIMBS == 8)
-        in1infty |= (in1_x[4] | in1_x[5] | in1_x[6] | in1_x[7] |
-                     in1_y[4] | in1_y[5] | in1_y[6] | in1_y[7]);
+        in1infty |= (in1_z[4] | in1_z[5] | in1_z[6] | in1_z[7]);
 
-    in2infty = (in2_x[0] | in2_x[1] | in2_x[2] | in2_x[3] |
-                in2_y[0] | in2_y[1] | in2_y[2] | in2_y[3]);
+    in2infty = (in2_z[0] | in2_z[1] | in2_z[2] | in2_z[3]);
     if (P256_LIMBS == 8)
-        in2infty |= (in2_x[4] | in2_x[5] | in2_x[6] | in2_x[7] |
-                     in2_y[4] | in2_y[5] | in2_y[6] | in2_y[7]);
+        in2infty |= (in2_z[4] | in2_z[5] | in2_z[6] | in2_z[7]);
 
     in1infty = is_zero(in1infty);
     in2infty = is_zero(in2infty);
@@ -405,15 +433,16 @@ static void ecp_nistz256_point_add_affine(P256_POINT *r,
     const BN_ULONG *in2_y = b->Y;
 
     /*
-     * In affine representation we encode infty as (0,0), which is not on the
-     * curve, so it is OK
+     * Infinity in encoded as (,,0)
      */
-    in1infty = (in1_x[0] | in1_x[1] | in1_x[2] | in1_x[3] |
-                in1_y[0] | in1_y[1] | in1_y[2] | in1_y[3]);
+    in1infty = (in1_z[0] | in1_z[1] | in1_z[2] | in1_z[3]);
     if (P256_LIMBS == 8)
-        in1infty |= (in1_x[4] | in1_x[5] | in1_x[6] | in1_x[7] |
-                     in1_y[4] | in1_y[5] | in1_y[6] | in1_y[7]);
+        in1infty |= (in1_z[4] | in1_z[5] | in1_z[6] | in1_z[7]);
 
+    /*
+     * In affine representation we encode infinity as (0,0), which is
+     * not on the curve, so it is OK
+     */
     in2infty = (in2_x[0] | in2_x[1] | in2_x[2] | in2_x[3] |
                 in2_y[0] | in2_y[1] | in2_y[2] | in2_y[3]);
     if (P256_LIMBS == 8)
@@ -628,9 +657,9 @@ __owur static int ecp_nistz256_windowed_mul(const EC_GROUP *group,
         }
 
         /*
-	 * row[0] is implicitly (0,0,0) (the point at infinity), therefore it
-	 * is not stored. All other values are actually stored with an offset
-	 * of -1 in table.
+         * row[0] is implicitly (0,0,0) (the point at infinity), therefore it
+         * is not stored. All other values are actually stored with an offset
+         * of -1 in table.
          */
 
         ecp_nistz256_scatter_w5  (row, &temp[0], 1);
@@ -746,10 +775,9 @@ static int ecp_nistz256_is_affine_G(const EC_POINT *generator)
 {
     return (bn_get_top(generator->X) == P256_LIMBS) &&
         (bn_get_top(generator->Y) == P256_LIMBS) &&
-        (bn_get_top(generator->Z) == (P256_LIMBS - P256_LIMBS / 8)) &&
         is_equal(bn_get_words(generator->X), def_xG) &&
         is_equal(bn_get_words(generator->Y), def_yG) &&
-        is_one(bn_get_words(generator->Z));
+        is_one(generator->Z);
 }
 
 __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
@@ -760,10 +788,10 @@ __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
      * implicit value of infinity at index zero. We use window of size 7, and
      * therefore require ceil(256/7) = 37 tables.
      */
-    BIGNUM *order;
+    const BIGNUM *order;
     EC_POINT *P = NULL, *T = NULL;
     const EC_POINT *generator;
-    EC_PRE_COMP *pre_comp;
+    NISTZ256_PRE_COMP *pre_comp;
     BN_CTX *new_ctx = NULL;
     int i, j, k, ret = 0;
     size_t w;
@@ -771,11 +799,8 @@ __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
     PRECOMP256_ROW *preComputedTable = NULL;
     unsigned char *precomp_storage = NULL;
 
-    /* if there is an old EC_PRE_COMP object, throw it away */
-    EC_EX_DATA_free_data(&group->extra_data, ecp_nistz256_pre_comp_dup,
-                         ecp_nistz256_pre_comp_free,
-                         ecp_nistz256_pre_comp_clear_free);
-
+    /* if there is an old NISTZ256_PRE_COMP object, throw it away */
+    EC_pre_comp_free(group);
     generator = EC_GROUP_get0_generator(group);
     if (generator == NULL) {
         ECerr(EC_F_ECP_NISTZ256_MULT_PRECOMPUTE, EC_R_UNDEFINED_GENERATOR);
@@ -800,12 +825,9 @@ __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
     }
 
     BN_CTX_start(ctx);
-    order = BN_CTX_get(ctx);
 
+    order = EC_GROUP_get0_order(group);
     if (order == NULL)
-        goto err;
-
-    if (!EC_GROUP_get_order(group, order, ctx))
         goto err;
 
     if (BN_is_zero(order)) {
@@ -866,18 +888,9 @@ __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
     pre_comp->w = w;
     pre_comp->precomp = preComputedTable;
     pre_comp->precomp_storage = precomp_storage;
-
     precomp_storage = NULL;
-
-    if (!EC_EX_DATA_set_data(&group->extra_data, pre_comp,
-                             ecp_nistz256_pre_comp_dup,
-                             ecp_nistz256_pre_comp_free,
-                             ecp_nistz256_pre_comp_clear_free)) {
-        goto err;
-    }
-
+    SETPRECOMP(group, nistz256, pre_comp);
     pre_comp = NULL;
-
     ret = 1;
 
  err:
@@ -885,7 +898,7 @@ __owur static int ecp_nistz256_mult_precompute(EC_GROUP *group, BN_CTX *ctx)
         BN_CTX_end(ctx);
     BN_CTX_free(new_ctx);
 
-    ecp_nistz256_pre_comp_free(pre_comp);
+    EC_nistz256_pre_comp_free(pre_comp);
     OPENSSL_free(precomp_storage);
     EC_POINT_free(P);
     EC_POINT_free(T);
@@ -1102,10 +1115,10 @@ __owur static int ecp_nistz256_set_from_affine(EC_POINT *out, const EC_GROUP *gr
     int ret = 0;
 
     x = BN_new();
-    if (!x)
+    if (x == NULL)
         return 0;
     y = BN_new();
-    if (!y) {
+    if (y == NULL) {
         BN_free(x);
         return 0;
     }
@@ -1135,7 +1148,7 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
     size_t j;
     unsigned char p_str[33] = { 0 };
     const PRECOMP256_ROW *preComputedTable = NULL;
-    const EC_PRE_COMP *pre_comp = NULL;
+    const NISTZ256_PRE_COMP *pre_comp = NULL;
     const EC_POINT *generator = NULL;
     BN_CTX *new_ctx = NULL;
     const BIGNUM **new_scalars = NULL;
@@ -1186,10 +1199,7 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
         }
 
         /* look if we can use precomputed multiples of generator */
-        pre_comp =
-            EC_EX_DATA_get_data(group->extra_data, ecp_nistz256_pre_comp_dup,
-                                ecp_nistz256_pre_comp_free,
-                                ecp_nistz256_pre_comp_clear_free);
+        pre_comp = group->pre_comp.nistz256;
 
         if (pre_comp) {
             /*
@@ -1261,6 +1271,8 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
             } else
 #endif
             {
+                BN_ULONG infty;
+
                 /* First window */
                 wvalue = (p_str[0] << 1) & mask;
                 idx += window_size;
@@ -1273,7 +1285,30 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
                 ecp_nistz256_neg(p.p.Z, p.p.Y);
                 copy_conditional(p.p.Y, p.p.Z, wvalue & 1);
 
-                memcpy(p.p.Z, ONE, sizeof(ONE));
+                /*
+                 * Since affine infinity is encoded as (0,0) and
+                 * Jacobian ias (,,0), we need to harmonize them
+                 * by assigning "one" or zero to Z.
+                 */
+                infty = (p.p.X[0] | p.p.X[1] | p.p.X[2] | p.p.X[3] |
+                         p.p.Y[0] | p.p.Y[1] | p.p.Y[2] | p.p.Y[3]);
+                if (P256_LIMBS == 8)
+                    infty |= (p.p.X[4] | p.p.X[5] | p.p.X[6] | p.p.X[7] |
+                              p.p.Y[4] | p.p.Y[5] | p.p.Y[6] | p.p.Y[7]);
+
+                infty = 0 - is_zero(infty);
+                infty = ~infty;
+
+                p.p.Z[0] = ONE[0] & infty;
+                p.p.Z[1] = ONE[1] & infty;
+                p.p.Z[2] = ONE[2] & infty;
+                p.p.Z[3] = ONE[3] & infty;
+                if (P256_LIMBS == 8) {
+                    p.p.Z[4] = ONE[4] & infty;
+                    p.p.Z[5] = ONE[5] & infty;
+                    p.p.Z[6] = ONE[6] & infty;
+                    p.p.Z[7] = ONE[7] & infty;
+                }
 
                 for (i = 1; i < 37; i++) {
                     unsigned int off = (idx - 1) / 8;
@@ -1305,13 +1340,13 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
          * handled like a normal point.
          */
         new_scalars = OPENSSL_malloc((num + 1) * sizeof(BIGNUM *));
-        if (!new_scalars) {
+        if (new_scalars == NULL) {
             ECerr(EC_F_ECP_NISTZ256_POINTS_MUL, ERR_R_MALLOC_FAILURE);
             goto err;
         }
 
         new_points = OPENSSL_malloc((num + 1) * sizeof(EC_POINT *));
-        if (!new_points) {
+        if (new_points == NULL) {
             ECerr(EC_F_ECP_NISTZ256_POINTS_MUL, ERR_R_MALLOC_FAILURE);
             goto err;
         }
@@ -1344,7 +1379,7 @@ __owur static int ecp_nistz256_points_mul(const EC_GROUP *group,
         !bn_set_words(r->Z, p.p.Z, P256_LIMBS)) {
         goto err;
     }
-    r->Z_is_one = is_one(p.p.Z) & 1;
+    r->Z_is_one = is_one(r->Z) & 1;
 
     ret = 1;
 
@@ -1401,83 +1436,71 @@ __owur static int ecp_nistz256_get_affine(const EC_GROUP *group,
     return 1;
 }
 
-static EC_PRE_COMP *ecp_nistz256_pre_comp_new(const EC_GROUP *group)
+static NISTZ256_PRE_COMP *ecp_nistz256_pre_comp_new(const EC_GROUP *group)
 {
-    EC_PRE_COMP *ret = NULL;
+    NISTZ256_PRE_COMP *ret = NULL;
 
     if (!group)
         return NULL;
 
-    ret = OPENSSL_malloc(sizeof(*ret));
+    ret = OPENSSL_zalloc(sizeof(*ret));
 
-    if (!ret) {
+    if (ret == NULL) {
         ECerr(EC_F_ECP_NISTZ256_PRE_COMP_NEW, ERR_R_MALLOC_FAILURE);
         return ret;
     }
 
     ret->group = group;
     ret->w = 6;                 /* default */
-    ret->precomp = NULL;
-    ret->precomp_storage = NULL;
     ret->references = 1;
+
+    ret->lock = CRYPTO_THREAD_lock_new();
+    if (ret->lock == NULL) {
+        ECerr(EC_F_ECP_NISTZ256_PRE_COMP_NEW, ERR_R_MALLOC_FAILURE);
+        OPENSSL_free(ret);
+        return NULL;
+    }
     return ret;
 }
 
-static void *ecp_nistz256_pre_comp_dup(void *src_)
-{
-    EC_PRE_COMP *src = src_;
-
-    /* no need to actually copy, these objects never change! */
-    CRYPTO_add(&src->references, 1, CRYPTO_LOCK_EC_PRE_COMP);
-
-    return src_;
-}
-
-static void ecp_nistz256_pre_comp_free(void *pre_)
+NISTZ256_PRE_COMP *EC_nistz256_pre_comp_dup(NISTZ256_PRE_COMP *p)
 {
     int i;
-    EC_PRE_COMP *pre = pre_;
+    if (p != NULL)
+        CRYPTO_atomic_add(&p->references, 1, &i, p->lock);
+    return p;
+}
 
-    if (!pre)
+void EC_nistz256_pre_comp_free(NISTZ256_PRE_COMP *pre)
+{
+    int i;
+
+    if (pre == NULL)
         return;
 
-    i = CRYPTO_add(&pre->references, -1, CRYPTO_LOCK_EC_PRE_COMP);
+    CRYPTO_atomic_add(&pre->references, -1, &i, pre->lock);
+    REF_PRINT_COUNT("EC_nistz256", x);
     if (i > 0)
         return;
+    REF_ASSERT_ISNT(i < 0);
 
     OPENSSL_free(pre->precomp_storage);
+    CRYPTO_THREAD_lock_free(pre->lock);
     OPENSSL_free(pre);
 }
 
-static void ecp_nistz256_pre_comp_clear_free(void *pre_)
-{
-    int i;
-    EC_PRE_COMP *pre = pre_;
-
-    if (!pre)
-        return;
-
-    i = CRYPTO_add(&pre->references, -1, CRYPTO_LOCK_EC_PRE_COMP);
-    if (i > 0)
-        return;
-
-    OPENSSL_clear_free(pre->precomp,
-                       32 * sizeof(unsigned char) * (1 << pre->w) * 2 * 37);
-    OPENSSL_clear_free(pre, sizeof(*pre));
-}
 
 static int ecp_nistz256_window_have_precompute_mult(const EC_GROUP *group)
 {
     /* There is a hard-coded table for the default generator. */
     const EC_POINT *generator = EC_GROUP_get0_generator(group);
+
     if (generator != NULL && ecp_nistz256_is_affine_G(generator)) {
         /* There is a hard-coded table for the default generator. */
         return 1;
     }
 
-    return EC_EX_DATA_get_data(group->extra_data, ecp_nistz256_pre_comp_dup,
-                               ecp_nistz256_pre_comp_free,
-                               ecp_nistz256_pre_comp_clear_free) != NULL;
+    return HAVEPRECOMP(group, nistz256);
 }
 
 const EC_METHOD *EC_GFp_nistz256_method(void)
@@ -1492,6 +1515,7 @@ const EC_METHOD *EC_GFp_nistz256_method(void)
         ec_GFp_mont_group_set_curve,
         ec_GFp_simple_group_get_curve,
         ec_GFp_simple_group_get_degree,
+        ec_group_simple_order_bits,
         ec_GFp_simple_group_check_discriminant,
         ec_GFp_simple_point_init,
         ec_GFp_simple_point_finish,
@@ -1519,7 +1543,16 @@ const EC_METHOD *EC_GFp_nistz256_method(void)
         0,                                          /* field_div */
         ec_GFp_mont_field_encode,
         ec_GFp_mont_field_decode,
-        ec_GFp_mont_field_set_to_one
+        ec_GFp_mont_field_set_to_one,
+        ec_key_simple_priv2oct,
+        ec_key_simple_oct2priv,
+        0, /* set private */
+        ec_key_simple_generate_key,
+        ec_key_simple_check_key,
+        ec_key_simple_generate_public_key,
+        0, /* keycopy */
+        0, /* keyfinish */
+        ecdh_simple_compute_key
     };
 
     return &ret;

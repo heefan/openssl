@@ -1,60 +1,10 @@
-/* crypto/rsa/rsa_pmeth.c */
 /*
- * Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL project
- * 2006.
- */
-/* ====================================================================
- * Copyright (c) 2006 The OpenSSL Project.  All rights reserved.
+ * Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    licensing@OpenSSL.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the OpenSSL license (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
 #include <stdio.h>
@@ -65,9 +15,7 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
-#ifndef OPENSSL_NO_CMS
-# include <openssl/cms.h>
-#endif
+#include <openssl/cms.h>
 #include "internal/evp_int.h"
 #include "rsa_locl.h"
 
@@ -98,7 +46,7 @@ static int pkey_rsa_init(EVP_PKEY_CTX *ctx)
 {
     RSA_PKEY_CTX *rctx;
     rctx = OPENSSL_zalloc(sizeof(*rctx));
-    if (!rctx)
+    if (rctx == NULL)
         return 0;
     rctx->nbits = 1024;
     rctx->pad_mode = RSA_PKCS1_PADDING;
@@ -128,7 +76,7 @@ static int pkey_rsa_copy(EVP_PKEY_CTX *dst, EVP_PKEY_CTX *src)
     dctx->mgf1md = sctx->mgf1md;
     if (sctx->oaep_label) {
         OPENSSL_free(dctx->oaep_label);
-        dctx->oaep_label = BUF_memdup(sctx->oaep_label, sctx->oaep_labellen);
+        dctx->oaep_label = OPENSSL_memdup(sctx->oaep_label, sctx->oaep_labellen);
         if (!dctx->oaep_label)
             return 0;
         dctx->oaep_labellen = sctx->oaep_labellen;
@@ -141,7 +89,7 @@ static int setup_tbuf(RSA_PKEY_CTX *ctx, EVP_PKEY_CTX *pk)
     if (ctx->tbuf)
         return 1;
     ctx->tbuf = OPENSSL_malloc(EVP_PKEY_size(pk->pkey));
-    if (!ctx->tbuf)
+    if (ctx->tbuf == NULL)
         return 0;
     return 1;
 }
@@ -175,7 +123,7 @@ static int pkey_rsa_sign(EVP_PKEY_CTX *ctx, unsigned char *sig,
             unsigned int sltmp;
             if (rctx->pad_mode != RSA_PKCS1_PADDING)
                 return -1;
-            ret = RSA_sign_ASN1_OCTET_STRING(NID_mdc2,
+            ret = RSA_sign_ASN1_OCTET_STRING(0,
                                              tbs, tbslen, sig, &sltmp, rsa);
 
             if (ret <= 0)
@@ -377,8 +325,11 @@ static int pkey_rsa_decrypt(EVP_PKEY_CTX *ctx,
 
 static int check_padding_md(const EVP_MD *md, int padding)
 {
+    int mdnid;
     if (!md)
         return 1;
+
+    mdnid = EVP_MD_type(md);
 
     if (padding == RSA_NO_PADDING) {
         RSAerr(RSA_F_CHECK_PADDING_MD, RSA_R_INVALID_PADDING_MODE);
@@ -386,11 +337,31 @@ static int check_padding_md(const EVP_MD *md, int padding)
     }
 
     if (padding == RSA_X931_PADDING) {
-        if (RSA_X931_hash_id(EVP_MD_type(md)) == -1) {
+        if (RSA_X931_hash_id(mdnid) == -1) {
             RSAerr(RSA_F_CHECK_PADDING_MD, RSA_R_INVALID_X931_DIGEST);
             return 0;
         }
-        return 1;
+    } else {
+        switch(mdnid) {
+        /* List of all supported RSA digests */
+        case NID_sha1:
+        case NID_sha224:
+        case NID_sha256:
+        case NID_sha384:
+        case NID_sha512:
+        case NID_md5:
+        case NID_md5_sha1:
+        case NID_md2:
+        case NID_md4:
+        case NID_mdc2:
+        case NID_ripemd160:
+            return 1;
+
+        default:
+            RSAerr(RSA_F_CHECK_PADDING_MD, RSA_R_INVALID_DIGEST);
+            return 0;
+
+        }
     }
 
     return 1;
@@ -453,8 +424,10 @@ static int pkey_rsa_ctrl(EVP_PKEY_CTX *ctx, int type, int p1, void *p2)
         return 1;
 
     case EVP_PKEY_CTRL_RSA_KEYGEN_PUBEXP:
-        if (!p2)
+        if (p2 == NULL || !BN_is_odd((BIGNUM *)p2) || BN_is_one((BIGNUM *)p2)) {
+            RSAerr(RSA_F_PKEY_RSA_CTRL, RSA_R_BAD_E_VALUE);
             return -2;
+        }
         BN_free(rctx->pub_exp);
         rctx->pub_exp = p2;
         return 1;
@@ -616,7 +589,7 @@ static int pkey_rsa_ctrl_str(EVP_PKEY_CTX *ctx,
         unsigned char *lab;
         long lablen;
         int ret;
-        lab = string_to_hex(value, &lablen);
+        lab = OPENSSL_hexstr2buf(value, &lablen);
         if (!lab)
             return 0;
         ret = EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, lab, lablen);
@@ -634,17 +607,17 @@ static int pkey_rsa_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey)
     RSA_PKEY_CTX *rctx = ctx->data;
     BN_GENCB *pcb;
     int ret;
-    if (!rctx->pub_exp) {
+    if (rctx->pub_exp == NULL) {
         rctx->pub_exp = BN_new();
-        if (!rctx->pub_exp || !BN_set_word(rctx->pub_exp, RSA_F4))
+        if (rctx->pub_exp == NULL || !BN_set_word(rctx->pub_exp, RSA_F4))
             return 0;
     }
     rsa = RSA_new();
-    if (!rsa)
+    if (rsa == NULL)
         return 0;
     if (ctx->pkey_gencb) {
         pcb = BN_GENCB_new();
-        if (!pcb) {
+        if (pcb == NULL) {
             RSA_free(rsa);
             return 0;
         }
